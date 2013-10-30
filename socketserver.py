@@ -1,56 +1,106 @@
 """
-Chat server without Twisted.
+Chat server with only select.
 """
 
 import select, socket, sys
 
-class ChatServer():
+class ChatServer(object):
     def __init__(self, listener, name = "server"):
         self.listener = listener # listening socket
         self.name = name
-        self.socks = [self.listener]
-        self.rooms = []
+        # self.socks = [self.listener]
+        self.clients = [self.listener] # clients are Person objects (except for listener)
+        # self.rooms = set()
+        # self.peer2room = dict()
+        self.msgqueues = dict()
 
     def start(self):
         while True:
-            rlist, wlist, _ = select.select(self.socks, self.socks[1:], [])
+            rlist, wlist, _ = select.select(self.clients, self.clients[1:], [])
                 
-            for sock in rlist:
-                if sock is self.listener:
+            for rclient in rlist:
+                if rclient is self.listener:
                     # Listener received connection request
-                    client, (ip, port) = sock.accept() # Can this be an existing client?
-                    self.socks.append(client)
-                    print("{} has connected.".format(ip))
+                    self.handle_listener()
                 else:
-                    msg = self.get_msg(sock)
-                    self.send_msg(sock, msg, wlist)
-    
-    def get_msg(self, sock):
+                    msg = self.get_msg(rclient)
+                    self.handle_msg(rclient, msg)
+
+            for wclient in wlist:
+                while self.msgqueues[wclient]: # Is this loop necessary?
+                    next_msg = self.msgqueues[wclient].pop()
+                    wclient.sock.sendall(next_msg)
+
+    def get_msg(self, client):
+        # handles parsing messages
         cache = []
 
         while True:
-            msg = sock.recv(10)
+            msg = client.sock.recv(10).decode()
             if not msg:
-                self.remove(sock)
+                self.clients.remove(client)
                 break
             else:
-                cache.append(str(msg))
+                cache.append(msg)
                 print("".join(cache))
                 if msg.endswith("\n"):
                     break
 
         return "".join(cache)
 
-    def send_msg(self, sender, msg, wlist): # sender = socket
+    def handle_listener(self):
+        sock, addr = self.listener.accept()
+        client = Client(sock, addr)
+        self.clients.append(client)
+        self.msgqueues[client] = []
+        print("{} has connected.".format(client.name))
+        # Insert welcome message.
+
+    def handle_msg(self, sender, msg): # sender = socket
         print("Client says:", msg)
-        for sock in wlist:
-            if sock is not sender:
-                sock.sendall(msg)
+        # room = self.peer2room[sender]
+        for client in self.msgqueues:
+            if client is not sender:
+                self.msgqueues[client].append(msg.encode())
 
-    def remove(self, sock):
-        sock.close()
-        self.socks.remove(sock)
+    def remove(self, client):
+        client.sock.close()
+        self.clients.remove(client)
 
+
+class Room(object):
+    def __init__(self, name):
+        self.name = name
+        self.clients = set()
+        self.msgqueues = dict()
+
+    # def add_client(self):
+    #     pass
+
+    def kick_client(self):
+        pass
+
+
+class Client(object):
+    def __init__(self, sock, addr, name="anon"):
+        self.sock = sock
+        self.addr = addr
+        self.name = name
+        self.rooms = set()
+
+    def set_name(self, name):
+        self.name = name
+
+    def join_room(self, room):
+        room.clients.add(self)
+        self.rooms.add(room)
+
+    def leave_room(self, room):
+        room.clients.remove(self)
+        self.rooms.remove(room)
+
+    def fileno(self):
+        return self.sock.fileno()
 
 def main():
     addr = ('127.0.0.1', 8000)
