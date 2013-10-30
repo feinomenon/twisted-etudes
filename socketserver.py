@@ -8,28 +8,38 @@ class ChatServer(object):
     def __init__(self, listener, name = "server"):
         self.listener = listener # listening socket
         self.name = name
-        # self.socks = [self.listener]
-        self.clients = [self.listener] # clients are Person objects (except for listener)
-        # self.rooms = set()
+        self.clients = [] # clients are Person objects (except for listener)
+        self.rooms = set()
         # self.peer2room = dict()
         self.msgqueues = dict()
 
+    @property
+    def readers(self):
+        return self.clients + [self.listener]
+
+    @property
+    def writers(self):
+        return [client for client in self.msgqueues if self.msgqueues[client]]
+
     def start(self):
         while True:
-            rlist, wlist, _ = select.select(self.clients, self.clients[1:], [])
-                
-            for rclient in rlist:
-                if rclient is self.listener:
-                    # Listener received connection request
-                    self.handle_listener()
-                else:
-                    msg = self.get_msg(rclient)
-                    self.handle_msg(rclient, msg)
+            self.select_loop()
 
-            for wclient in wlist:
-                while self.msgqueues[wclient]: # Is this loop necessary?
-                    next_msg = self.msgqueues[wclient].pop()
-                    wclient.sock.sendall(next_msg)
+    def select_loop(self):
+        rlist, wlist, _ = select.select(self.readers, self.writers, [])
+            
+        for rclient in rlist:
+            if rclient is self.listener:
+                # Listener received connection request
+                self.handle_listener()
+            else:
+                msg = self.get_msg(rclient)
+                self.handle_msg(rclient, msg)
+
+        for wclient in wlist:
+            next_msg = self.msgqueues[wclient].pop(0)
+            amt_sent = wclient.sock.send(next_msg)
+            self.msgqueues.insert(0, next_msg[amt_sent:])
 
     def get_msg(self, client):
         # handles parsing messages
@@ -37,12 +47,13 @@ class ChatServer(object):
 
         while True:
             msg = client.sock.recv(10).decode()
+            print("Received", msg)
             if not msg:
                 self.clients.remove(client)
                 break
             else:
                 cache.append(msg)
-                print("".join(cache))
+                # print("".join(cache))
                 if msg.endswith("\n"):
                     break
 
@@ -102,7 +113,7 @@ class Client(object):
     def fileno(self):
         return self.sock.fileno()
 
-def main():
+def get_listener():
     addr = ('127.0.0.1', 8000)
 
     # Create listening socket
@@ -111,9 +122,11 @@ def main():
     listener.setblocking(0)
     listener.bind(addr)
     listener.listen(5)
+    return listener
 
+def main():
     print("Listening at", addr)
-
+    listener = get_listener()
     server = ChatServer(listener)
     server.start()
 
