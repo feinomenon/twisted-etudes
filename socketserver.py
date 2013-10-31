@@ -6,6 +6,7 @@ import select, socket, sys
 
 class ChatServer(object):
     def __init__(self, listener, name = "server"):
+        # should create the listener socket with an adress argument or port
         self.listener = listener # listening socket
         self.name = name
         self.clients = [] # clients are Person objects (except for listener)
@@ -27,7 +28,7 @@ class ChatServer(object):
 
     def select_loop(self):
         rlist, wlist, _ = select.select(self.readers, self.writers, [])
-            
+
         for rclient in rlist:
             if rclient is self.listener:
                 # Listener received connection request
@@ -39,7 +40,7 @@ class ChatServer(object):
         for wclient in wlist:
             next_msg = self.msgqueues[wclient].pop(0)
             amt_sent = wclient.sock.send(next_msg)
-            self.msgqueues.insert(0, next_msg[amt_sent:])
+            self.msgqueues[wclient].insert(0, next_msg[amt_sent:])
 
     def get_msg(self, client):
         # handles parsing messages
@@ -69,10 +70,14 @@ class ChatServer(object):
 
     def handle_msg(self, sender, msg): # sender = socket
         print("Client says:", msg)
-        # room = self.peer2room[sender]
-        for client in self.msgqueues:
+        self.send_msg_to_room(sender, msg)
+
+
+    def send_msg_to_room(self, sender, msg):
+        for client in sender.room:
             if client is not sender:
                 self.msgqueues[client].append(msg.encode())
+
 
     def remove(self, client):
         client.sock.close()
@@ -83,7 +88,6 @@ class Room(object):
     def __init__(self, name):
         self.name = name
         self.clients = set()
-        self.msgqueues = dict()
 
     # def add_client(self):
     #     pass
@@ -97,7 +101,7 @@ class Client(object):
         self.sock = sock
         self.addr = addr
         self.name = name
-        self.rooms = set()
+        self.room = None
 
     def set_name(self, name):
         self.name = name
@@ -113,10 +117,10 @@ class Client(object):
     def fileno(self):
         return self.sock.fileno()
 
-def get_listener():
-    addr = ('127.0.0.1', 8000)
-
-    # Create listening socket
+def get_listener(addr):
+    """ (str, int) -> socket
+    Creates listening socket and returns it
+    """
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.setblocking(0)
@@ -125,8 +129,13 @@ def get_listener():
     return listener
 
 def main():
+    """
+    Run the server
+    """
+    addr = ('127.0.0.1', 8000)
+
     print("Listening at", addr)
-    listener = get_listener()
+    listener = get_listener(addr)
     server = ChatServer(listener)
     server.start()
 

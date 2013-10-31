@@ -9,11 +9,13 @@ import socket
 
 class TestChatServer(unittest.TestCase):
     def test_server(self):
-        server = ChatServer()
+        addr = ('127.0.0.1', 8000)
+        server = ChatServer(get_listener(addr))
         self.assertTrue(True)
 
     def test_server_start_with_clients(self):
-        server = ChatServer(get_listener())
+        addr = ('127.0.0.1', 8001)
+        server = ChatServer(get_listener(addr))
         t = threading.Thread(target = server.start)
         t.daemon = True
         t.start()
