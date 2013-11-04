@@ -1,18 +1,17 @@
-"""
-Chat server with only select.
-"""
+"""Chat server with only select."""
 
 import select, socket, sys
 
 class ChatServer(object):
-    def __init__(self, listener, name = "server"):
-        # should create the listener socket with an adress argument or port
-        self.listener = listener # listening socket
+    # TODO: Do something better than crashing when client disconnects
+    def __init__(self, addr, name="server"):
+        self.addr = addr
         self.name = name
-        self.clients = [] # clients are Person objects (except for listener)
+        self.listener = self.make_listener() # listening socket
+        self.clients = []
         self.rooms = set()
-        # self.peer2room = dict()
-        self.msgqueues = dict()
+        self.rqueues = dict()   # Maps clients to messages they want to send
+        self.wqueues = dict()   # Maps clients to messages they need to receive
 
     @property
     def readers(self):
@@ -20,64 +19,71 @@ class ChatServer(object):
 
     @property
     def writers(self):
-        return [client for client in self.msgqueues if self.msgqueues[client]]
+        return [client for client in self.wqueues if self.wqueues[client]]
 
-    def start(self):
-        while True:
-            self.select_loop()
-
-    def select_loop(self):
-        rlist, wlist, _ = select.select(self.readers, self.writers, [])
-
-        for rclient in rlist:
-            if rclient is self.listener:
-                # Listener received connection request
-                self.handle_listener()
-            else:
-                msg = self.get_msg(rclient)
-                self.handle_msg(rclient, msg)
-
-        for wclient in wlist:
-            next_msg = self.msgqueues[wclient].pop(0)
-            amt_sent = wclient.sock.send(next_msg)
-            self.msgqueues[wclient].insert(0, next_msg[amt_sent:])
+    def make_listener(self):
+        """Creates listening socket and binds it to self.addr"""
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.setblocking(0)
+        listener.bind(self.addr)
+        return listener
 
     def get_msg(self, client):
-        # handles parsing messages
-        cache = []
+        """Gets messages from clients and adds them to their read queues"""
+        msg = client.sock.recv(10).decode()
+        if client in self.rqueues:
+            self.rqueues[client] = "".join((self.rqueues[client], msg))
+        else:
+            self.rqueues[client] = msg
+        print("Received", self.rqueues[client])
 
-        while True:
-            msg = client.sock.recv(10).decode()
-            print("Received", msg)
-            if not msg:
-                self.clients.remove(client)
-                break
-            else:
-                cache.append(msg)
-                # print("".join(cache))
-                if msg.endswith("\n"):
-                    break
-
-        return "".join(cache)
-
-    def handle_listener(self):
+    def handle_request(self):
+        """Handles connection requests"""
         sock, addr = self.listener.accept()
         client = Client(sock, addr)
         self.clients.append(client)
-        self.msgqueues[client] = []
+        self.wqueues[client] = "Server: Welcome, {}!".format(client.name)
         print("{} has connected.".format(client.name))
-        # Insert welcome message.
 
-    def handle_msg(self, sender, msg): # sender = socket
-        print("Client says:", msg)
-        self.send_msg_to_room(sender, msg)
+    def dispatch_msgs(self):
+        # Moves new message in the read queues to the proper write queues
+        # Currently only supports broadcasts
+        print("Preparing messages for sending...")
 
+        # TODO: Python3 does not like when dict changes size during iteration
+        # Do we need to add everyone to self.rqueue?
+        for sender, msg in self.rqueues.items():
+            for receiver in self.clients:
+                if receiver is not sender:
+                    self.wqueues[receiver] += msg
+            self.rqueues.pop(sender)
 
-    def send_msg_to_room(self, sender, msg):
-        for client in sender.room:
-            if client is not sender:
-                self.msgqueues[client].append(msg.encode())
+    def start(self):
+        self.listener.listen(5)
+        print("Listening on {}:{}...".format(*self.addr))
 
+        # Main event loop
+        while True:
+            # Determine whom to send queued messages to
+            self.dispatch_msgs()
+            rlist, wlist, _ = select.select(self.readers, self.writers, [])
+
+            for rclient in rlist:
+                if rclient is self.listener:
+                    # Listener received connection request
+                    self.handle_request()
+                else:
+                    # Someone is sending a message
+                    msg = self.get_msg(rclient)
+
+            for wclient in wlist:
+                # Send as much of the first queued message as possible; add the
+                # remaining back to the read queue
+                if self.wqueues[wclient]:
+                    next_msg = self.wqueues[wclient]
+                    amt_sent = wclient.sock.send(next_msg.encode())
+                    self.wqueues[wclient] = next_msg[amt_sent:]
 
     def remove(self, client):
         client.sock.close()
@@ -117,16 +123,6 @@ class Client(object):
     def fileno(self):
         return self.sock.fileno()
 
-def get_listener(addr):
-    """ (str, int) -> socket
-    Creates listening socket and returns it
-    """
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.setblocking(0)
-    listener.bind(addr)
-    listener.listen(5)
-    return listener
 
 def main():
     """
@@ -135,8 +131,7 @@ def main():
     addr = ('127.0.0.1', 8000)
 
     print("Listening at", addr)
-    listener = get_listener(addr)
-    server = ChatServer(listener)
+    server = ChatServer(addr)
     server.start()
 
 if __name__ == '__main__':
