@@ -43,7 +43,7 @@ class ChatServer(object):
         sock, addr = self.listener.accept()
         client = Client(sock, addr)
         self.clients.append(client)
-        self.wqueues[client] = "Server: Welcome, {}!".format(client.name)
+        self.wqueues[client] = "Server: Welcome, {}!\n".format(client.name)
         print("{} has connected.".format(client.name))
 
     def dispatch_msgs(self):
@@ -51,9 +51,7 @@ class ChatServer(object):
         # Currently only supports broadcasts
         print("Preparing messages for sending...")
 
-        # TODO: Python3 does not like when dict changes size during iteration
-        # Do we need to add everyone to self.rqueue?
-        for sender, msg in self.rqueues.items():
+        for sender, msg in list(self.rqueues.items()): # Hackish?
             for receiver in self.clients:
                 if receiver is not sender:
                     self.wqueues[receiver] += msg
