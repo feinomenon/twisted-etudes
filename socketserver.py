@@ -7,7 +7,7 @@ class ChatServer(object):
     def __init__(self, addr, name="server"):
         self.addr = addr
         self.name = name
-        self.listener = self.make_listener() # listening socket
+        self.listener = None # listening socket
         self.clients = []
         self.rooms = set()
         self.rqueues = dict()   # Maps clients to messages they want to send
@@ -21,6 +21,7 @@ class ChatServer(object):
     def writers(self):
         return [client for client in self.wqueues if self.wqueues[client]]
 
+    # Make private?
     def make_listener(self):
         """Creates listening socket and binds it to self.addr"""
         listener = socket.socket()
@@ -30,8 +31,11 @@ class ChatServer(object):
         return listener
 
     def get_msg(self, client):
-        """Gets messages from clients and adds them to their read queues"""
         msg = client.sock.recv(10).decode()
+        self.update_rqueues(client, msg)
+
+    def update_rqueues(self, client, msg):
+        """Gets messages from clients and adds them to their read queues"""
         if client in self.rqueues:
             self.rqueues[client] = "".join((self.rqueues[client], msg))
         else:
@@ -42,22 +46,24 @@ class ChatServer(object):
         """Handles connection requests"""
         sock, addr = self.listener.accept()
         client = Client(sock, addr)
+        self.add(client)
+
+    def add(self, client):
         self.clients.append(client)
-        self.wqueues[client] = "Server: Welcome, {}!\n".format(client.name)
+        self.wqueues[client] = "" #"Server: Welcome, {}!\n".format(client.name)
         print("{} has connected.".format(client.name))
 
     def dispatch_msgs(self):
         # Moves new message in the read queues to the proper write queues
         # Currently only supports broadcasts
-        print("Preparing messages for sending...")
-
         for sender, msg in list(self.rqueues.items()): # Hackish?
             for receiver in self.clients:
                 if receiver is not sender:
                     self.wqueues[receiver] += msg
-            self.rqueues.pop(sender)
+            self.rqueues.pop(sender)    # Should rqueues be modified during iteration?
 
     def start(self):
+        self.listener = self.make_listener()
         self.listener.listen(5)
         print("Listening on {}:{}...".format(*self.addr))
 
@@ -73,7 +79,7 @@ class ChatServer(object):
                     self.handle_request()
                 else:
                     # Someone is sending a message
-                    msg = self.get_msg(rclient)
+                    self.get_msg(rclient)
 
             for wclient in wlist:
                 # Send as much of the first queued message as possible; add the
@@ -86,6 +92,7 @@ class ChatServer(object):
     def remove(self, client):
         client.sock.close()
         self.clients.remove(client)
+        self.wqueues.pop(clients, None)
 
 
 class Room(object):
@@ -128,7 +135,6 @@ def main():
     """
     addr = ('127.0.0.1', 8000)
 
-    print("Listening at", addr)
     server = ChatServer(addr)
     server.start()
 
